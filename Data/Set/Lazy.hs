@@ -8,20 +8,43 @@ Stability   : experimental
 
 A Set that can be created from lazy, ordered, infinite lists. 
 -}
-module Data.Set.Lazy where 
+module Data.Set.Lazy (
+    
+    -- * Types
+    LazySet,
 
-import Prelude hiding(lookup)
+    -- * Query    
+    member,
+    lookup,
+    null,
+    size,
+    
+    -- * Combine
+    spanAntitone ,
+    union,
+
+    -- * Build
+    empty,
+    fromAscList,
+    growFromAscList,
+    fromList,
+    fromDescList,
+    build,
+    
+    -- * Export
+    toList,
+
+    )where 
+
+import Prelude hiding (lookup, null)
 import qualified Data.List as List
 import qualified Data.Set as NSet
 import qualified Data.List.Ordered as OList
 import Data.Maybe (isJust)
 import Data.Ord
 
-    
 data LazySet a = LazySet [NSet.Set a]
     deriving (Eq, Show)
-    
--- * Query    
 
 -- | Checks if the value is a member of the 'LazySet'. 
 -- Performance: O(m)=log m  
@@ -49,8 +72,6 @@ null _ = False
 size :: Ord a => LazySet a -> Int
 size = length . toList 
 
--- * Combine
-    
 -- | Splits the 'LazySet' into two parts. 
 -- The first containing all consecutive elements of the Set where the predicate applies.
 -- The second contains the (infinite) rest. 
@@ -64,10 +85,6 @@ spanAntitone pred (LazySet sets) = let
 union :: Ord a => LazySet a -> LazySet a -> LazySet a
 union s1 s2 = let  
     in fromList $ OList.union (toList s1) (toList s2)
-
-
--- * Build
-
 
 -- | Create an 'empty' 'LazySet'.    
 empty :: Ord a => LazySet a    
@@ -110,9 +127,6 @@ build _ _ [] = []
 build level growth xs = let 
     (elementsForThisLevel, elementsFurtherDown) = List.splitAt (ceiling $ growth^level) xs
     in (NSet.fromAscList elementsForThisLevel):(build (level + 1) growth elementsFurtherDown)
-    
-    
--- * Export
       
 -- | List with all elements in order.
 toList :: Ord a => LazySet a -> [a]
