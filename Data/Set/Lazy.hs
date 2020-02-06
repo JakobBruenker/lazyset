@@ -37,14 +37,24 @@ module Data.Set.Lazy (
     )where 
 
 import Prelude hiding (lookup, null)
+import Data.Foldable (asum)
 import qualified Data.List as List
 import qualified Data.Set as NSet
 import qualified Data.List.Ordered as OList
 import Data.Maybe (isJust)
 import Data.Ord
 
-data LazySet a = LazySet [NSet.Set a]
-    deriving (Eq, Show)
+-- A bounded consists of its greatest member as well as a set of all its
+-- members that are smaller
+data BoundedSet a = BoundedSet { bsSet :: !(NSet.Set a)
+                               , bsMax :: !a
+                               } deriving (Eq)
+
+newtype LazySet a = LazySet [BoundedSet a]
+    deriving (Eq)
+
+instance (Ord a, Show a) => Show (LazySet a) where
+  showsPrec n = showsPrec n . toList
 
 -- | Checks if the value is a member of the 'LazySet'. 
 -- Performance: O(m)=log m  
@@ -53,19 +63,19 @@ data LazySet a = LazySet [NSet.Set a]
 member :: Ord a => a -> LazySet a ->  Bool
 member e set = isJust $ lookup e set             
     
--- | Searches for a value in a Set. If it can not be found returns 'Nothing' otherwhise 
+-- | Searches for a value in a Set. If it can not be found returns 'Nothing' otherwise 
 -- Returns 'Just a' if it can find it. The returned value will be the one from the set, not the one that was passed. 
 lookup :: Ord a => a -> LazySet a -> Maybe a
-lookup e (LazySet sets) = findIn sets
-    where findIn [] = Nothing
-          findIn (set:rest) = case NSet.lookupLE e set of 
-            Nothing -> Nothing
-            Just x ->  if (x == e) then Just x else findIn rest  
+lookup e (LazySet ls) = go ls
+    where go (BoundedSet set me : bsets) = case compare e me of
+            GT -> go bsets
+            EQ -> Just me
+            LT -> NSet.lookupLE e set
+          go [] = Nothing
 
-
--- | Returns true if the 'LazSet' is empty. 
+-- | Returns true if the 'LazySet' is empty. 
 null :: LazySet a -> Bool
-null (LazySet (x:xs)) = True
+null (LazySet []) = True
 null _ = False
 
 -- | Returns the size of the set. Do not use this on infinite Sets.
@@ -76,10 +86,14 @@ size = length . toList
 -- The first containing all consecutive elements of the Set where the predicate applies.
 -- The second contains the (infinite) rest. 
 spanAntitone :: Ord a => (a -> Bool) -> LazySet a -> (LazySet a, LazySet a)
-spanAntitone pred (LazySet sets) = let
-    (lesser, (middle:higher)) = List.span (pred . NSet.findMax) sets
-    (middleLesser, middleHigher) = NSet.spanAntitone pred middle
-    in (LazySet (lesser++[middleLesser]), LazySet (middleHigher:higher))
+spanAntitone p (LazySet sets) = let
+    (lesser, (BoundedSet middle middleHighest : higher)) =
+      List.span (p . bsMax) sets
+    (middleLesser, middleHigher) = NSet.spanAntitone p middle
+    middleLesserBounded = BoundedSet middleLesserNoMax middleLesserHighest
+    (middleLesserHighest, middleLesserNoMax) = NSet.deleteFindMax middleLesser
+    in (LazySet (lesser ++ [middleLesserBounded]),
+       LazySet (BoundedSet middleHigher middleHighest : higher))
     
 -- | Union of two LazySets.     
 union :: Ord a => LazySet a -> LazySet a -> LazySet a
@@ -107,8 +121,9 @@ growFromAscList :: Ord a =>
     -> LazySet a     
 growFromAscList growth _ | growth < 1.0 = error "growth must be at least 1" 
 growFromAscList growth xs = LazySet (build 0 growth (checkDir xs))
-    where checkDir (a:b:s)| a > b = error "Elements must be ascending." 
-          checkDir  xs = xs   
+    where checkDir (a:b:s) | a > b = error "Elements must be ascending." 
+          checkDir (x:xs) = x : checkDir xs
+          checkDir [] = []
 
 -- | Alias for 'fromAscList'.
 fromList :: Ord a => [a] -> LazySet a
@@ -122,13 +137,20 @@ fromDescList xs = fromAscList (map Down xs)
 build :: Ord a => Int -- ^ starting-depth 
     -> Float -- ^ growth-factor
     -> [a] -- ^Ascending source-list 
-    -> [NSet.Set a]         
+    -> [BoundedSet a]
 build _ _ [] = []
 build level growth xs = let 
-    (elementsForThisLevel, elementsFurtherDown) = List.splitAt (ceiling $ growth^level) xs
-    in (NSet.fromAscList elementsForThisLevel):(build (level + 1) growth elementsFurtherDown)
+    (thisLevel', rest) =
+      List.splitAt (ceiling (growth^level) - 1) xs
+    ((thisLevel, maxElem), elementsFurtherDown) = case rest of
+      y:ys -> ((thisLevel', y), ys)
+      [] -> (unsnoc thisLevel', [])
+    thisLevelBounded = BoundedSet (NSet.fromAscList thisLevel) maxElem
+    in thisLevelBounded : build (level + 1) growth elementsFurtherDown
+    where unsnoc [x] = ([], x)
+          unsnoc (x:xs) = let (a, b) = unsnoc xs in (x:a, b)
       
 -- | List with all elements in order.
 toList :: Ord a => LazySet a -> [a]
-toList (LazySet sets) = concat $ map NSet.toAscList sets
-   
+toList (LazySet sets) =
+  concatMap (\bs -> NSet.toAscList (bsSet bs) ++ [bsMax bs]) sets
